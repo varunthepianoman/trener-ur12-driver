@@ -20,14 +20,13 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.ros2
-    network_mode: host          # Simplest: share host network, reach ursim via localhost
     environment:
       - ROS_DOMAIN_ID=0
-      - ROBOT_HOST=localhost    # ursim ports are mapped to host via docker-compose
+      - ROBOT_HOST=ursim
     command: >
       ros2 run ur12_driver ur_driver_node
       --ros-args
-      -p robot_host:=localhost
+      -p robot_host:=ursim
       -p program_path:=/ursim/programs/ur12_program.script
     depends_on:
       - ursim

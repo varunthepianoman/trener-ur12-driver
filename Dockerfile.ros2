@@ -1,9 +1,13 @@
 FROM osrf/ros:jazzy-desktop
 
-# Install build tools
+# Install build tools and ROS2 C++ deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3-pip \
+    build-essential \
+    cmake \
+    netcat-openbsd \
     ros-jazzy-sensor-msgs \
+    ros-jazzy-std-srvs \
+    ros-jazzy-rosidl-default-generators \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy workspace
