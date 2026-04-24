@@ -7,6 +7,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     netcat-openbsd \
     ros-jazzy-sensor-msgs \
     ros-jazzy-std-srvs \
+    ros-jazzy-rclcpp-action \
+    ros-jazzy-rclcpp-lifecycle \
+    ros-jazzy-action-msgs \
+    ros-jazzy-lifecycle-msgs \
+    ros-jazzy-ros2-control \
+    ros-jazzy-ros2-controllers \
+    ros-jazzy-robot-state-publisher \
     ros-jazzy-rosidl-default-generators \
     && rm -rf /var/lib/apt/lists/*
 

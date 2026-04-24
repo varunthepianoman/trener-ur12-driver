@@ -1,0 +1,9 @@
+# Goal (empty — home position is fixed)
+---
+# Result
+bool success
+string message
+---
+# Feedback
+float64[6] current_positions
+float64 distance_to_goal

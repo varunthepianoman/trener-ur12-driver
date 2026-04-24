@@ -27,8 +27,8 @@ public:
   static constexpr int kPort    = 29999;
   static constexpr int kTimeout = 5;  // seconds
 
-  explicit DashboardClient(std::string host = "localhost")
-  : host_(std::move(host)), fd_(-1) {}
+  explicit DashboardClient(std::string host = "localhost", int port = kPort)
+  : host_(std::move(host)), port_(port), fd_(-1) {}
 
   ~DashboardClient() { disconnect(); }
 
@@ -62,7 +62,7 @@ public:
     struct addrinfo hints{}, * res = nullptr;
     hints.ai_family   = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
-    if (getaddrinfo(host_.c_str(), std::to_string(kPort).c_str(), &hints, &res) != 0) {
+    if (getaddrinfo(host_.c_str(), std::to_string(port_).c_str(), &hints, &res) != 0) {
       return false;
     }
 
@@ -105,7 +105,8 @@ public:
 
 private:
   std::string host_;
-  int fd_;
+  int         port_;
+  int         fd_;
 
   std::pair<bool, std::string> cmd(const std::string & command)
   {

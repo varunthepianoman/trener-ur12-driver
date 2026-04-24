@@ -5,7 +5,12 @@
 int main(int argc, char * argv[])
 {
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<ur12_driver::UrDriverNode>());
+  // SingleThreadedExecutor works for this node; the action execute functions
+  // spawn their own threads so they don't block the executor.
+  rclcpp::executors::SingleThreadedExecutor exe;
+  auto node = std::make_shared<ur12_driver::UrDriverNode>();
+  exe.add_node(node->get_node_base_interface());
+  exe.spin();
   rclcpp::shutdown();
   return 0;
 }

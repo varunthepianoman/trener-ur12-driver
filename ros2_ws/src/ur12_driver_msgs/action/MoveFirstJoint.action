@@ -1,0 +1,10 @@
+# Goal
+float64 joint_val
+---
+# Result
+bool success
+string message
+---
+# Feedback
+float64 current_position
+float64 distance_remaining

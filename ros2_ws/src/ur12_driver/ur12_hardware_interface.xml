@@ -1,0 +1,12 @@
+<library path="ur12_hardware_interface">
+  <class
+    name="ur12_driver/Ur12HardwareInterface"
+    type="ur12_driver::Ur12HardwareInterface"
+    base_class_type="hardware_interface::SystemInterface">
+    <description>
+      ros2_control hardware interface for UR12 E-series robot.
+      Reads joint positions and velocities via RTDE (port 30004).
+      Write path is scaffolded; production uses External Control URCap reverse interface.
+    </description>
+  </class>
+</library>

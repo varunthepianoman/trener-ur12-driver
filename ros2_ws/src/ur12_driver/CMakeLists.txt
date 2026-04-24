@@ -11,11 +11,17 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_action REQUIRED)
+find_package(rclcpp_lifecycle REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(ur12_driver_msgs REQUIRED)
+find_package(hardware_interface REQUIRED)
+find_package(pluginlib REQUIRED)
 
+# ------------------------------------------------------------------
 # Driver node executable
+# ------------------------------------------------------------------
 add_executable(ur_driver_node
   src/ur_driver_node.cpp
   src/main.cpp
@@ -28,13 +34,38 @@ target_include_directories(ur_driver_node PUBLIC
 
 ament_target_dependencies(ur_driver_node
   rclcpp
+  rclcpp_action
+  rclcpp_lifecycle
   sensor_msgs
   std_srvs
   ur12_driver_msgs
 )
 
+# ------------------------------------------------------------------
+# Hardware interface shared library (pluginlib plugin)
+# ------------------------------------------------------------------
+add_library(ur12_hardware_interface SHARED
+  src/ur12_hardware_interface.cpp
+)
+
+target_include_directories(ur12_hardware_interface PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+
+ament_target_dependencies(ur12_hardware_interface
+  hardware_interface
+  pluginlib
+  rclcpp
+  rclcpp_lifecycle
+)
+
+pluginlib_export_plugin_description_file(hardware_interface ur12_hardware_interface.xml)
+
+# ------------------------------------------------------------------
 # Install
-install(TARGETS ur_driver_node
+# ------------------------------------------------------------------
+install(TARGETS ur_driver_node ur12_hardware_interface
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -42,7 +73,17 @@ install(DIRECTORY include/
   DESTINATION include
 )
 
+install(FILES ur12_hardware_interface.xml
+  DESTINATION share/${PROJECT_NAME}
+)
+
+install(DIRECTORY config launch urdf
+  DESTINATION share/${PROJECT_NAME}
+)
+
+# ------------------------------------------------------------------
 # Tests
+# ------------------------------------------------------------------
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
 

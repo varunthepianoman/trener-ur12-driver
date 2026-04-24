@@ -54,8 +54,9 @@ public:
   static constexpr uint8_t TYPE_START     = 83;  // 'S'
   static constexpr uint8_t TYPE_DATA      = 85;  // 'U'
 
-  explicit RtdeClient(std::string host = "localhost", double frequency = kDefaultFreq)
-  : host_(std::move(host)), frequency_(frequency), fd_(-1), running_(false) {}
+  explicit RtdeClient(std::string host = "localhost", double frequency = kDefaultFreq,
+                      int port = kPort)
+  : host_(std::move(host)), frequency_(frequency), port_(port), fd_(-1), running_(false) {}
 
   ~RtdeClient() { stop(); }
 
@@ -85,18 +86,55 @@ public:
     if (thread_.joinable()) thread_.join();
   }
 
+  bool is_connected() const { return connected_; }
+
   RobotState get_state() const
   {
     std::lock_guard<std::mutex> lock(mutex_);
     return state_;
   }
 
+  // ------------------------------------------------------------------
+  // Test helpers (static so tests can exercise parsing without a live socket)
+  // ------------------------------------------------------------------
+
+  /// Parse a DATA_PACKAGE payload (recipe_id byte + 6×double pos + 6×double vel, big-endian).
+  static RobotState parse_data_packet(const std::vector<uint8_t> & data)
+  {
+    constexpr size_t kExpected = 1 + 12 * sizeof(double);
+    RobotState s{};
+    if (data.size() < kExpected) return s;
+    size_t off = 1;
+    for (int i = 0; i < 6; ++i, off += sizeof(double)) {
+      s.joint_positions[i] = read_double_be(data.data() + off);
+    }
+    for (int i = 0; i < 6; ++i, off += sizeof(double)) {
+      s.joint_velocities[i] = read_double_be(data.data() + off);
+    }
+    return s;
+  }
+
+  /// Build a SETUP_OUTPUTS request payload — useful for verifying wire format in tests.
+  static std::vector<uint8_t> build_setup_outputs_payload(
+    double frequency, const char * vars)
+  {
+    uint64_t freq_bits;
+    std::memcpy(&freq_bits, &frequency, 8);
+    freq_bits = htobe64(freq_bits);
+    std::vector<uint8_t> payload(8 + std::strlen(vars));
+    std::memcpy(payload.data(), &freq_bits, 8);
+    std::memcpy(payload.data() + 8, vars, std::strlen(vars));
+    return payload;
+  }
+
 private:
   std::string host_;
   double      frequency_;
+  int         port_;
   int         fd_;
 
   std::atomic<bool>  running_;
+  std::atomic<bool>  connected_{false};
   mutable std::mutex mutex_;
   RobotState         state_;
   std::thread        thread_;
@@ -111,7 +149,7 @@ private:
     struct addrinfo hints{}, * res = nullptr;
     hints.ai_family   = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
-    if (getaddrinfo(host_.c_str(), std::to_string(kPort).c_str(), &hints, &res) != 0) {
+    if (getaddrinfo(host_.c_str(), std::to_string(port_).c_str(), &hints, &res) != 0) {
       return false;
     }
 
@@ -191,10 +229,6 @@ private:
     fprintf(stderr, "[RtdeClient] Recipe id=%d types=\"%s\"\n",
       recipe_id_, types.c_str());
 
-    // Fail only if ALL variables are NOT_FOUND (total handshake failure)
-    bool any_found = types.find("NOT_FOUND") == std::string::npos ||
-                     types != std::string(types.size(), 'N');  // at least one non-NOT_FOUND
-    // Simpler: fail only if the entire response is NOT_FOUND with no valid type
     return types.find("VECTOR6D") != std::string::npos ||
            types.find("DOUBLE")   != std::string::npos ||
            types.find("INT32")    != std::string::npos ||
@@ -244,12 +278,14 @@ private:
       }
 
       fprintf(stderr, "[RtdeClient] Handshake successful — streaming joint states\n");
+      connected_ = true;
 
       // Stream until connection drops, then reconnect
       while (running_) {
         auto [type, data] = recv_packet();
         if (type == 0) {
           fprintf(stderr, "[RtdeClient] Connection lost — reconnecting\n");
+          connected_ = false;
           break;
         }
         if (type == TYPE_DATA) {

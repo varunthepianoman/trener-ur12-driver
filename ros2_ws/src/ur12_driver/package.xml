@@ -10,9 +10,15 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <depend>rclcpp</depend>
+  <depend>rclcpp_action</depend>
+  <depend>rclcpp_lifecycle</depend>
   <depend>sensor_msgs</depend>
   <depend>std_srvs</depend>
   <depend>ur12_driver_msgs</depend>
+
+  <!-- ros2_control hardware interface -->
+  <depend>hardware_interface</depend>
+  <depend>pluginlib</depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
@@ -20,5 +26,6 @@
 
   <export>
     <build_type>ament_cmake</build_type>
+    <pluginlib plugin_description_file="ur12_hardware_interface.xml"/>
   </export>
 </package>
