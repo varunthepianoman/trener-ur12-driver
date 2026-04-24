@@ -1,0 +1,21 @@
+FROM osrf/ros:jazzy-desktop
+
+# Install build tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3-pip \
+    ros-jazzy-sensor-msgs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy workspace
+WORKDIR /ros2_ws
+COPY ros2_ws/src ./src
+
+# Build
+RUN . /opt/ros/jazzy/setup.sh && \
+    colcon build --symlink-install --packages-select ur12_driver_msgs ur12_driver
+
+# Entrypoint
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
+ENTRYPOINT ["/docker-entrypoint.sh"]
+CMD ["ros2", "run", "ur12_driver", "ur_driver_node"]
