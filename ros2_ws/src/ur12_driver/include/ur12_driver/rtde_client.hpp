@@ -172,29 +172,13 @@ private:
     uint16_t ver = htons(static_cast<uint16_t>(kProtocolVersion));
     send_packet(TYPE_VERSION, &ver, sizeof(ver));
     auto [type, data] = recv_packet();
-    fprintf(stderr, "[RtdeClient] VERSION reply: type=%d data_len=%zu\n",
-      type, data.size());
     if (type != TYPE_VERSION || data.empty()) return false;
-    bool accepted = data[0] != 0;
-    fprintf(stderr, "[RtdeClient] Protocol v%d %s\n",
-      kProtocolVersion, accepted ? "accepted" : "rejected");
-    return accepted;
-  }
-
-  static void hex_dump(const char * label, const uint8_t * buf, size_t len)
-  {
-    fprintf(stderr, "[RtdeClient] %s (%zu bytes):", label, len);
-    for (size_t i = 0; i < len; ++i) {
-      if (i % 16 == 0) fprintf(stderr, "\n  ");
-      fprintf(stderr, "%02X ", buf[i]);
-    }
-    fprintf(stderr, "\n");
+    return data[0] != 0;
   }
 
   bool setup_outputs()
   {
     static const char * vars = "actual_q,actual_qd";
-    fprintf(stderr, "[RtdeClient] Requesting variables: \"%s\"\n", vars);
 
     // Protocol v2 request payload: [frequency f64 BE][variable names string]
     // (recipe_id is server-assigned and returned in the response — NOT sent)
@@ -206,28 +190,13 @@ private:
     std::memcpy(payload.data(), &freq_bits, 8);
     std::memcpy(payload.data() + 8, vars, strlen(vars));
 
-    // Log full outgoing packet
-    {
-      uint16_t size = htons(static_cast<uint16_t>(3 + payload.size()));
-      std::vector<uint8_t> pkt(3 + payload.size());
-      std::memcpy(pkt.data(), &size, 2);
-      pkt[2] = TYPE_SETUP_OUT;
-      std::memcpy(pkt.data() + 3, payload.data(), payload.size());
-      hex_dump("SETUP_OUT send", pkt.data(), pkt.size());
-    }
-
     send_packet(TYPE_SETUP_OUT, payload.data(), payload.size());
 
     auto [type, data] = recv_packet();
-    fprintf(stderr, "[RtdeClient] SETUP_OUT reply: type=%d data_len=%zu\n",
-      type, data.size());
-    hex_dump("SETUP_OUT recv", data.data(), data.size());
     if (type != TYPE_SETUP_OUT || data.empty()) return false;
 
     recipe_id_ = data[0];
     std::string types(data.begin() + 1, data.end());
-    fprintf(stderr, "[RtdeClient] Recipe id=%d types=\"%s\"\n",
-      recipe_id_, types.c_str());
 
     return types.find("VECTOR6D") != std::string::npos ||
            types.find("DOUBLE")   != std::string::npos ||
@@ -239,12 +208,8 @@ private:
   {
     send_packet(TYPE_START, nullptr, 0);
     auto [type, data] = recv_packet();
-    fprintf(stderr, "[RtdeClient] START reply: type=%d data_len=%zu\n",
-      type, data.size());
     if (type != TYPE_START || data.empty()) return false;
-    bool accepted = data[0] != 0;
-    fprintf(stderr, "[RtdeClient] START %s\n", accepted ? "accepted" : "rejected");
-    return accepted;
+    return data[0] != 0;
   }
 
   // ------------------------------------------------------------------
@@ -253,34 +218,19 @@ private:
 
   void connect_loop()
   {
-    int attempt = 0;
     while (running_) {
-      ++attempt;
-      fprintf(stderr, "[RtdeClient] Handshake attempt %d\n", attempt);
-
       if (fd_ >= 0) { ::close(fd_); fd_ = -1; }
 
-      if (!connect_socket()) {
-        fprintf(stderr, "[RtdeClient] TCP connect failed — retrying in 2s\n");
-        sleep(2); continue;
-      }
-      if (!request_protocol_version()) {
-        fprintf(stderr, "[RtdeClient] Protocol version failed — retrying in 2s\n");
-        sleep(2); continue;
-      }
-      if (!setup_outputs()) {
-        fprintf(stderr, "[RtdeClient] Setup outputs failed (robot may be powered off) — retrying in 2s\n");
-        sleep(2); continue;
-      }
-      if (!send_start()) {
-        fprintf(stderr, "[RtdeClient] Start failed — retrying in 2s\n");
+      if (!connect_socket() || !request_protocol_version() ||
+          !setup_outputs()  || !send_start())
+      {
+        fprintf(stderr, "[RtdeClient] Handshake failed (robot may be powered off) — retrying in 2s\n");
         sleep(2); continue;
       }
 
-      fprintf(stderr, "[RtdeClient] Handshake successful — streaming joint states\n");
+      fprintf(stderr, "[RtdeClient] Handshake successful — streaming joint states at %.0f Hz\n", frequency_);
       connected_ = true;
 
-      // Stream until connection drops, then reconnect
       while (running_) {
         auto [type, data] = recv_packet();
         if (type == 0) {

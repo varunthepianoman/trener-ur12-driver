@@ -16,9 +16,10 @@ namespace ur12_driver
 UrDriverNode::UrDriverNode(const rclcpp::NodeOptions & options)
 : rclcpp_lifecycle::LifecycleNode("ur_driver_node", options)
 {
-  declare_parameter("robot_host",   "host.docker.internal");
-  declare_parameter("publish_rate", 125.0);
-  declare_parameter("program_path", "/programs/ur12_program.script");
+  declare_parameter("robot_host",      "host.docker.internal");
+  declare_parameter("publish_rate",    125.0);
+  declare_parameter("program_path",    "/programs/ur12_program.script");
+  declare_parameter("successive_goals", false);
 
   // Self-configure and activate once the executor is spinning.
   // Production systems would use ros2_lifecycle_manager instead.
@@ -43,15 +44,40 @@ UrDriverNode::~UrDriverNode()
 
 CallbackReturn UrDriverNode::on_configure(const rclcpp_lifecycle::State &)
 {
-  host_         = get_parameter("robot_host").as_string();
-  rate_         = get_parameter("publish_rate").as_double();
-  program_path_ = get_parameter("program_path").as_string();
+  host_            = get_parameter("robot_host").as_string();
+  rate_            = get_parameter("publish_rate").as_double();
+  program_path_    = get_parameter("program_path").as_string();
+  successive_goals_.store(get_parameter("successive_goals").as_bool());
+  RCLCPP_INFO(get_logger(), "successive_goals=%s",
+    successive_goals_.load() ? "true (concurrent goals will queue)" : "false (last script wins)");
+
+  // Allow toggling at runtime via `ros2 param set /ur_driver_node successive_goals true|false`.
+  param_cb_handle_ = add_on_set_parameters_callback(
+    [this](const std::vector<rclcpp::Parameter> & params) {
+      rcl_interfaces::msg::SetParametersResult res;
+      res.successful = true;
+      for (const auto & p : params) {
+        if (p.get_name() == "successive_goals" &&
+            p.get_type() == rclcpp::ParameterType::PARAMETER_BOOL) {
+          successive_goals_.store(p.as_bool());
+          RCLCPP_INFO(get_logger(), "successive_goals → %s",
+            p.as_bool() ? "true" : "false");
+        }
+      }
+      return res;
+    });
 
   RCLCPP_INFO(get_logger(), "Configuring — connecting to UR at %s", host_.c_str());
 
   dashboard_ = std::make_unique<DashboardClient>(host_);
-  script_    = std::make_unique<ScriptClient>(host_);
   rtde_      = std::make_unique<RtdeClient>(host_, rate_);
+
+  try {
+    script_ = std::make_unique<ScriptClient>(host_, program_path_);
+  } catch (const std::exception & e) {
+    RCLCPP_ERROR(get_logger(), "Failed to load script file: %s", e.what());
+    return CallbackReturn::FAILURE;
+  }
 
   if (!dashboard_->connect()) {
     RCLCPP_WARN(get_logger(), "Dashboard connect failed — will retry on first service call");
@@ -61,13 +87,14 @@ CallbackReturn UrDriverNode::on_configure(const rclcpp_lifecycle::State &)
   js_pub_ = create_publisher<sensor_msgs::msg::JointState>("/joint_states", 10);
 
   // Lifecycle control services — available from configured state
-  make_trigger("/ur/power_on",      [this]() { return dashboard_->power_on(); });
-  make_trigger("/ur/power_off",     [this]() { return dashboard_->power_off(); });
-  make_trigger("/ur/brake_release", [this]() { return dashboard_->brake_release(); });
-  make_trigger("/ur/play",          [this]() { return dashboard_->play(); });
-  make_trigger("/ur/pause",         [this]() { return dashboard_->pause(); });
-  make_trigger("/ur/resume",        [this]() { return dashboard_->play(); });
-  make_trigger("/ur/stop",          [this]() { return dashboard_->stop(); });
+  make_trigger("/ur/power_on",        [this]() { return dashboard_->power_on(); });
+  make_trigger("/ur/power_off",       [this]() { return dashboard_->power_off(); });
+  make_trigger("/ur/brake_release",   [this]() { return dashboard_->brake_release(); });
+  make_trigger("/ur/play",            [this]() { return dashboard_->play(); });
+  make_trigger("/ur/pause",           [this]() { return dashboard_->pause(); });
+  make_trigger("/ur/resume",          [this]() { return dashboard_->play(); });
+  make_trigger("/ur/stop",            [this]() { return dashboard_->stop(); });
+  make_trigger("/ur/get_robot_mode",  [this]() { return dashboard_->get_robot_mode(); });
 
   // Action servers — available from configured state, reject goals when inactive
   move_home_server_ = rclcpp_action::create_server<MoveHomeAction>(
@@ -81,6 +108,12 @@ CallbackReturn UrDriverNode::on_configure(const rclcpp_lifecycle::State &)
     [this](const auto & uuid, auto goal) { return handle_move_joint_goal(uuid, goal); },
     [this](auto gh)                      { return handle_move_joint_cancel(gh); },
     [this](auto gh)                      { handle_move_joint_accepted(gh); });
+
+  move_joints_server_ = rclcpp_action::create_server<MoveJointsAction>(
+    this, "/ur/move_joints",
+    [this](const auto & uuid, auto goal) { return handle_move_joints_goal(uuid, goal); },
+    [this](auto gh)                      { return handle_move_joints_cancel(gh); },
+    [this](auto gh)                      { handle_move_joints_accepted(gh); });
 
   RCLCPP_INFO(get_logger(), "Configured");
   return CallbackReturn::SUCCESS;
@@ -128,6 +161,7 @@ CallbackReturn UrDriverNode::on_cleanup(const rclcpp_lifecycle::State &)
   trigger_services_.clear();
   move_home_server_.reset();
   move_joint_server_.reset();
+  move_joints_server_.reset();
   dashboard_->disconnect();
   dashboard_.reset();
   script_.reset();
@@ -231,6 +265,9 @@ void UrDriverNode::execute_move_home(std::shared_ptr<GoalHandleMoveHome> goal_ha
   constexpr double kTimeoutS  = 15.0;
   const std::array<double, 6> home = {0, -1.5707, 1.5707, 0, 0, 0};
 
+  std::unique_lock<std::mutex> lock(motion_mutex_, std::defer_lock);
+  if (successive_goals_.load()) lock.lock();
+
   RCLCPP_INFO(get_logger(), "Executing move_home");
   script_->move_home();
 
@@ -319,6 +356,9 @@ void UrDriverNode::execute_move_joint(
   const double target_j0 =
     rtde_->get_state().joint_positions[0] + joint_val;
 
+  std::unique_lock<std::mutex> lock(motion_mutex_, std::defer_lock);
+  if (successive_goals_.load()) lock.lock();
+
   RCLCPP_INFO(get_logger(), "Executing move_first_joint(%.3f) → target j0=%.3f",
     joint_val, target_j0);
   script_->move_first_joint(joint_val);
@@ -354,6 +394,121 @@ void UrDriverNode::execute_move_joint(
 
     if (dist < kThreshold) {
       auto result     = std::make_shared<MoveFirstJointAction::Result>();
+      result->success = true;
+      result->message = "Reached target";
+      goal_handle->succeed(result);
+      return;
+    }
+
+    poll.sleep();
+  }
+}
+
+// ------------------------------------------------------------------
+// MoveJoints action
+// ------------------------------------------------------------------
+
+rclcpp_action::GoalResponse UrDriverNode::handle_move_joints_goal(
+  const rclcpp_action::GoalUUID &,
+  std::shared_ptr<const MoveJointsAction::Goal>)
+{
+  if (!rtde_ || !rtde_->is_connected()) {
+    RCLCPP_WARN(get_logger(), "move_joints rejected — RTDE not connected");
+    return rclcpp_action::GoalResponse::REJECT;
+  }
+  return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
+}
+
+rclcpp_action::CancelResponse UrDriverNode::handle_move_joints_cancel(
+  std::shared_ptr<GoalHandleMoveJoints>)
+{
+  RCLCPP_INFO(get_logger(), "move_joints cancel requested");
+  dashboard_->stop();
+  return rclcpp_action::CancelResponse::ACCEPT;
+}
+
+void UrDriverNode::handle_move_joints_accepted(
+  std::shared_ptr<GoalHandleMoveJoints> goal_handle)
+{
+  std::thread{[this, goal_handle]() { execute_move_joints(goal_handle); }}.detach();
+}
+
+void UrDriverNode::execute_move_joints(std::shared_ptr<GoalHandleMoveJoints> goal_handle)
+{
+  constexpr double kThreshold = 0.02;
+  constexpr double kTimeoutS  = 15.0;
+
+  const auto & goal_positions = goal_handle->get_goal()->joint_positions;
+  std::array<double, 6> target;
+  std::copy(goal_positions.begin(), goal_positions.end(), target.begin());
+
+  const auto & uuid = goal_handle->get_goal_id();
+  char tag[12];
+  snprintf(tag, sizeof(tag), "%02x%02x%02x%02x",
+    uuid[0], uuid[1], uuid[2], uuid[3]);
+
+  std::unique_lock<std::mutex> lock(motion_mutex_, std::defer_lock);
+  if (successive_goals_.load()) {
+    RCLCPP_INFO(get_logger(), "[%s] move_joints waiting on motion_mutex", tag);
+    lock.lock();
+    RCLCPP_INFO(get_logger(), "[%s] move_joints acquired motion_mutex", tag);
+  }
+
+  auto start_state = rtde_->get_state();
+  RCLCPP_INFO(get_logger(),
+    "[%s] move_joints START target=[%.3f,%.3f,%.3f,%.3f,%.3f,%.3f] "
+    "from=[%.3f,%.3f,%.3f,%.3f,%.3f,%.3f]",
+    tag,
+    target[0], target[1], target[2], target[3], target[4], target[5],
+    start_state.joint_positions[0], start_state.joint_positions[1],
+    start_state.joint_positions[2], start_state.joint_positions[3],
+    start_state.joint_positions[4], start_state.joint_positions[5]);
+  bool send_ok = script_->move_joints(target);
+  RCLCPP_INFO(get_logger(), "[%s] move_joints script send_ok=%d", tag, send_ok ? 1 : 0);
+
+  auto feedback = std::make_shared<MoveJointsAction::Feedback>();
+  auto start    = std::chrono::steady_clock::now();
+  rclcpp::Rate poll(10);
+
+  while (rclcpp::ok()) {
+    if (goal_handle->is_canceling()) {
+      auto result     = std::make_shared<MoveJointsAction::Result>();
+      result->success = false;
+      result->message = "Cancelled";
+      goal_handle->canceled(result);
+      return;
+    }
+
+    double elapsed =
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    if (elapsed > kTimeoutS) {
+      auto result     = std::make_shared<MoveJointsAction::Result>();
+      result->success = false;
+      result->message = "Timeout";
+      goal_handle->abort(result);
+      return;
+    }
+
+    auto state   = rtde_->get_state();
+    double max_err = 0.0;
+    for (int i = 0; i < 6; ++i) {
+      feedback->current_positions[i] = state.joint_positions[i];
+      max_err = std::max(max_err, std::abs(state.joint_positions[i] - target[i]));
+    }
+    feedback->distance_to_goal = max_err;
+    goal_handle->publish_feedback(feedback);
+
+    if (max_err < kThreshold) {
+      RCLCPP_INFO(get_logger(),
+        "[%s] move_joints SUCCESS after %.2fs max_err=%.4f "
+        "actual=[%.3f,%.3f,%.3f,%.3f,%.3f,%.3f] "
+        "target=[%.3f,%.3f,%.3f,%.3f,%.3f,%.3f]",
+        tag, elapsed, max_err,
+        state.joint_positions[0], state.joint_positions[1],
+        state.joint_positions[2], state.joint_positions[3],
+        state.joint_positions[4], state.joint_positions[5],
+        target[0], target[1], target[2], target[3], target[4], target[5]);
+      auto result     = std::make_shared<MoveJointsAction::Result>();
       result->success = true;
       result->message = "Reached target";
       goal_handle->succeed(result);

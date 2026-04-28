@@ -42,6 +42,25 @@ ament_target_dependencies(ur_driver_node
 )
 
 # ------------------------------------------------------------------
+# send_burst — fires N MoveJoints goals at fixed gaps from one node
+# ------------------------------------------------------------------
+add_executable(send_burst src/send_burst.cpp)
+ament_target_dependencies(send_burst
+  rclcpp
+  rclcpp_action
+  sensor_msgs
+  ur12_driver_msgs
+)
+
+add_executable(cancel_goal src/cancel_goal.cpp)
+ament_target_dependencies(cancel_goal
+  rclcpp
+  rclcpp_action
+  sensor_msgs
+  ur12_driver_msgs
+)
+
+# ------------------------------------------------------------------
 # Hardware interface shared library (pluginlib plugin)
 # ------------------------------------------------------------------
 add_library(ur12_hardware_interface SHARED
@@ -65,7 +84,7 @@ pluginlib_export_plugin_description_file(hardware_interface ur12_hardware_interf
 # ------------------------------------------------------------------
 # Install
 # ------------------------------------------------------------------
-install(TARGETS ur_driver_node ur12_hardware_interface
+install(TARGETS ur_driver_node send_burst cancel_goal ur12_hardware_interface
   DESTINATION lib/${PROJECT_NAME}
 )
 

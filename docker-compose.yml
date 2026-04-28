@@ -27,7 +27,13 @@ services:
       ros2 run ur12_driver ur_driver_node
       --ros-args
       -p robot_host:=ursim
-      -p program_path:=/ursim/programs/ur12_program.script
+      -p program_path:=/ros2_ws/commands.script
     depends_on:
       - ursim
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ros2", "node", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s

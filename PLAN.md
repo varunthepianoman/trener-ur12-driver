@@ -18,11 +18,53 @@ Target: ROS2 C++ driver for a UR12 E-series robot, validated against URSim.
 | Day | Goal | Status |
 |-----|------|--------|
 | 1 | C++ driver PoC, working E2E against URSim | ✅ Done |
-| 2 | Action servers for motion, lifecycle node wrapping | 🔲 |
-| 3 | ros2_control hardware interface scaffold + RTDE wired in | 🔲 |
-| 4 | Unit tests (mock socket) + integration tests with URSim | 🔲 |
+| 2 | Action servers for motion, lifecycle node wrapping | ✅ Done |
+| 3 | ros2_control hardware interface scaffold + RTDE wired in | ✅ Done |
+| 4 | Unit tests (mock socket) + integration tests with URSim | ✅ Done |
 | 5 | Polish, demo script, stress-test | 🔲 |
 | 6–7 | Presentation slides, architecture diagrams, talking points | 🔲 |
+
+---
+
+## Day 5 Detail — Polish, Demo Script, Stress-Test
+
+### 5A — Polish
+Clean up rough edges before the demo:
+
+- **Remove debug noise**: strip `fprintf(stderr, ...)` hex-dump output from `RtdeClient` (or gate behind a `verbose` parameter). Fine for debugging, embarrassing in a demo.
+- **Suppress compiler warnings**: fix any remaining `-Wunused`, `-Wpedantic` issues flagged at build time.
+- **README**: write a concise top-level `README.md` covering: what it is, how to run (`docker compose up`), how to drive the robot (service/action CLI commands), architecture overview in 5 bullet points.
+- **`docker compose` UX**: add a `healthcheck` to the `ur12_driver` service so `docker compose ps` shows `healthy` once the node is active, not just `running`.
+
+### 5B — Demo Script
+A single shell script (`demo.sh`) that drives the robot end-to-end and prints annotated output. Audience should be able to follow along without knowing ROS2.
+
+Steps the script will execute (each with a printed header):
+1. `power_on` → wait for "Powering on"
+2. `brake_release` → wait for "Brake releasing"
+3. Sleep 5 s (robot arms up)
+4. Show current joint positions from `/joint_states`
+5. `move_home` action → stream feedback until SUCCEEDED
+6. Show joint positions at home
+7. `move_first_joint 1.0` action → stream feedback until SUCCEEDED
+8. Show joint positions (j0 ≈ 1.0 rad)
+9. `move_first_joint -1.0` action → return to home
+10. `power_off`
+
+The script should be runnable with: `docker compose exec ur12_driver bash /ros2_ws/demo.sh`
+
+### 5C — Stress Tests
+Validate the driver holds up under conditions the reviewer might probe:
+
+| Scenario | What to check | Pass criterion |
+|----------|--------------|----------------|
+| **Rapid successive goals** | Send 10 `move_first_joint` goals back-to-back with 0.1 rad increments | All succeed or are cleanly preempted; no crash or deadlock |
+| **Goal cancellation** | Send a 1.5 rad goal, cancel after 500 ms | `CANCELED` result, robot stops within 1 s |
+| **RTDE reconnect** | Kill and restart the `ursim` container mid-stream | Driver reconnects automatically, `/joint_states` resumes within 10 s |
+| **Long-running stability** | Let the driver idle at 125 Hz for 60 s | No memory growth, no dropped connection |
+| **Lifecycle transitions** | `deactivate` → `activate` via `ros2 lifecycle set` | Services/actions come back cleanly, RTDE reconnects |
+
+Results to be documented in DEVLOG Day 5 entry.
 
 ---
 

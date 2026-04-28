@@ -3,6 +3,6 @@ def move_home():
 end
 def move_first_joint(joint_val=0):
     curr_joint = get_actual_joint_positions()
-    curr_joint[0] = first_joint + joint_val
+    curr_joint[0] = curr_joint[0] + joint_val
     movej(curr_joint)
 end

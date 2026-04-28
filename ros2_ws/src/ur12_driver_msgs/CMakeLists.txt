@@ -9,6 +9,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/MoveFirstJoint.srv"
   "action/MoveHome.action"
   "action/MoveFirstJoint.action"
+  "action/MoveJoints.action"
   DEPENDENCIES action_msgs
 )
 

@@ -1,0 +1,10 @@
+# Goal: target joint positions for all 6 joints (radians)
+float64[6] joint_positions
+---
+# Result
+bool success
+string message
+---
+# Feedback
+float64[6] current_positions
+float64 distance_to_goal
