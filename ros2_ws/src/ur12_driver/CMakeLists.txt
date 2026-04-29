@@ -111,6 +111,11 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_rtde_client test/test_rtde_client.cpp)
   target_include_directories(test_rtde_client PRIVATE include)
+  ament_target_dependencies(test_rtde_client rclcpp)
+
+  ament_add_gtest(test_script_client test/test_script_client.cpp)
+  target_include_directories(test_script_client PRIVATE include)
+  ament_target_dependencies(test_script_client rclcpp)
 endif()
 
 ament_package()

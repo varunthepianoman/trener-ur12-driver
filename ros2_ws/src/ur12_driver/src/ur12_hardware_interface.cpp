@@ -142,15 +142,17 @@ hardware_interface::return_type Ur12HardwareInterface::read(
 }
 
 // ------------------------------------------------------------------
-// write — scaffold: log commands, do not forward to robot yet
-// Production path: stream joint targets via External Control URCap
-// reverse interface (port 50001) at 500 Hz.
+// write — no-op stub. Command interfaces are exported so controllers
+// can be loaded, but setpoints are intentionally not forwarded.
+// Production path: stream joint targets via the External Control URCap
+// reverse interface (port 50001) at 500 Hz. Doing this over the
+// secondary interface (Architecture 2) would inherit URSim's REPLACE
+// semantics — catastrophic at trajectory frequencies.
 // ------------------------------------------------------------------
 
 hardware_interface::return_type Ur12HardwareInterface::write(
   const rclcpp::Time &, const rclcpp::Duration &)
 {
-  // No-op until reverse interface is implemented
   return hardware_interface::return_type::OK;
 }
 

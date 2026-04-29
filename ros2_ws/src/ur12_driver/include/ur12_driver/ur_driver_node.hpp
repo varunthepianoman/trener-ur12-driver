@@ -17,6 +17,7 @@
 #include "ur12_driver_msgs/action/move_home.hpp"
 #include "ur12_driver_msgs/action/move_first_joint.hpp"
 #include "ur12_driver_msgs/action/move_joints.hpp"
+#include "ur12_driver_msgs/srv/get_robot_mode.hpp"
 
 #include "ur12_driver/dashboard_client.hpp"
 #include "ur12_driver/rtde_client.hpp"
@@ -37,6 +38,12 @@ using GoalHandleMoveJoints     = rclcpp_action::ServerGoalHandle<MoveJointsActio
 class UrDriverNode : public rclcpp_lifecycle::LifecycleNode
 {
 public:
+  // Motion convergence threshold and timeout, shared by all execute_move_*.
+  // Threshold: ~1.15° per joint; below this the action reports SUCCEEDED.
+  // Timeout: hard upper bound regardless of progress.
+  static constexpr double kMotionThresholdRad = 0.02;
+  static constexpr double kMotionTimeoutS     = 15.0;
+
   explicit UrDriverNode(const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
   ~UrDriverNode() override;
 
@@ -57,8 +64,11 @@ private:
   std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<sensor_msgs::msg::JointState>> js_pub_;
   rclcpp::TimerBase::SharedPtr js_timer_;
 
-  // Lifecycle services (power, brakes, play/pause/stop)
+  // Lifecycle services (power, brakes, play/pause/stop) — std_srvs/Trigger
   std::vector<rclcpp::ServiceBase::SharedPtr> trigger_services_;
+
+  // Typed state-query services
+  rclcpp::Service<ur12_driver_msgs::srv::GetRobotMode>::SharedPtr get_robot_mode_srv_;
 
   // Action servers
   rclcpp_action::Server<MoveHomeAction>::SharedPtr       move_home_server_;

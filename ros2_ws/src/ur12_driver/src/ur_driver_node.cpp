@@ -87,6 +87,8 @@ CallbackReturn UrDriverNode::on_configure(const rclcpp_lifecycle::State &)
   js_pub_ = create_publisher<sensor_msgs::msg::JointState>("/joint_states", 10);
 
   // Lifecycle control services — available from configured state
+  // Side-effecting commands — std_srvs/Trigger fits naturally
+  // (success/fail + free-form message).
   make_trigger("/ur/power_on",        [this]() { return dashboard_->power_on(); });
   make_trigger("/ur/power_off",       [this]() { return dashboard_->power_off(); });
   make_trigger("/ur/brake_release",   [this]() { return dashboard_->brake_release(); });
@@ -94,7 +96,31 @@ CallbackReturn UrDriverNode::on_configure(const rclcpp_lifecycle::State &)
   make_trigger("/ur/pause",           [this]() { return dashboard_->pause(); });
   make_trigger("/ur/resume",          [this]() { return dashboard_->play(); });
   make_trigger("/ur/stop",            [this]() { return dashboard_->stop(); });
-  make_trigger("/ur/get_robot_mode",  [this]() { return dashboard_->get_robot_mode(); });
+
+  // State queries — typed srv so callers don't substring-parse the reply.
+  get_robot_mode_srv_ = create_service<ur12_driver_msgs::srv::GetRobotMode>(
+    "/ur/get_robot_mode",
+    [this](
+      const std::shared_ptr<ur12_driver_msgs::srv::GetRobotMode::Request>,
+      std::shared_ptr<ur12_driver_msgs::srv::GetRobotMode::Response> res)
+    {
+      auto [ok, raw] = dashboard_->get_robot_mode();
+      res->success = ok;
+      res->raw     = raw;
+      // Dashboard reply format is "Robotmode: <MODE>". Pull the value
+      // after the colon; if the format ever changes, success+raw still
+      // give the caller something to work with.
+      if (ok) {
+        auto pos = raw.find(':');
+        if (pos != std::string::npos) {
+          std::string mode = raw.substr(pos + 1);
+          while (!mode.empty() && (mode.front() == ' ' || mode.front() == '\t')) {
+            mode.erase(mode.begin());
+          }
+          res->mode = mode;
+        }
+      }
+    });
 
   // Action servers — available from configured state, reject goals when inactive
   move_home_server_ = rclcpp_action::create_server<MoveHomeAction>(
@@ -159,6 +185,7 @@ CallbackReturn UrDriverNode::on_cleanup(const rclcpp_lifecycle::State &)
 {
   js_pub_.reset();
   trigger_services_.clear();
+  get_robot_mode_srv_.reset();
   move_home_server_.reset();
   move_joint_server_.reset();
   move_joints_server_.reset();
@@ -256,13 +283,23 @@ rclcpp_action::CancelResponse UrDriverNode::handle_move_home_cancel(
 void UrDriverNode::handle_move_home_accepted(
   std::shared_ptr<GoalHandleMoveHome> goal_handle)
 {
-  std::thread{[this, goal_handle]() { execute_move_home(goal_handle); }}.detach();
+  std::thread{[this, goal_handle]() {
+    try {
+      execute_move_home(goal_handle);
+    } catch (const std::exception & e) {
+      RCLCPP_ERROR(get_logger(), "execute_move_home threw: %s", e.what());
+      auto result     = std::make_shared<MoveHomeAction::Result>();
+      result->success = false;
+      result->message = std::string("Internal error: ") + e.what();
+      goal_handle->abort(result);
+    }
+  }}.detach();
 }
 
 void UrDriverNode::execute_move_home(std::shared_ptr<GoalHandleMoveHome> goal_handle)
 {
-  constexpr double kThreshold = 0.02;   // rad
-  constexpr double kTimeoutS  = 15.0;
+  constexpr double kThreshold = kMotionThresholdRad;
+  constexpr double kTimeoutS  = kMotionTimeoutS;
   const std::array<double, 6> home = {0, -1.5707, 1.5707, 0, 0, 0};
 
   std::unique_lock<std::mutex> lock(motion_mutex_, std::defer_lock);
@@ -281,6 +318,14 @@ void UrDriverNode::execute_move_home(std::shared_ptr<GoalHandleMoveHome> goal_ha
       result->success = false;
       result->message = "Cancelled";
       goal_handle->canceled(result);
+      return;
+    }
+
+    if (!rtde_->is_connected()) {
+      auto result     = std::make_shared<MoveHomeAction::Result>();
+      result->success = false;
+      result->message = "RTDE disconnected mid-motion";
+      goal_handle->abort(result);
       return;
     }
 
@@ -341,14 +386,24 @@ rclcpp_action::CancelResponse UrDriverNode::handle_move_joint_cancel(
 void UrDriverNode::handle_move_joint_accepted(
   std::shared_ptr<GoalHandleMoveFirstJoint> goal_handle)
 {
-  std::thread{[this, goal_handle]() { execute_move_joint(goal_handle); }}.detach();
+  std::thread{[this, goal_handle]() {
+    try {
+      execute_move_joint(goal_handle);
+    } catch (const std::exception & e) {
+      RCLCPP_ERROR(get_logger(), "execute_move_joint threw: %s", e.what());
+      auto result     = std::make_shared<MoveFirstJointAction::Result>();
+      result->success = false;
+      result->message = std::string("Internal error: ") + e.what();
+      goal_handle->abort(result);
+    }
+  }}.detach();
 }
 
 void UrDriverNode::execute_move_joint(
   std::shared_ptr<GoalHandleMoveFirstJoint> goal_handle)
 {
-  constexpr double kThreshold = 0.02;
-  constexpr double kTimeoutS  = 15.0;
+  constexpr double kThreshold = kMotionThresholdRad;
+  constexpr double kTimeoutS  = kMotionTimeoutS;
 
   const double joint_val = goal_handle->get_goal()->joint_val;
 
@@ -373,6 +428,14 @@ void UrDriverNode::execute_move_joint(
       result->success = false;
       result->message = "Cancelled";
       goal_handle->canceled(result);
+      return;
+    }
+
+    if (!rtde_->is_connected()) {
+      auto result     = std::make_shared<MoveFirstJointAction::Result>();
+      result->success = false;
+      result->message = "RTDE disconnected mid-motion";
+      goal_handle->abort(result);
       return;
     }
 
@@ -430,13 +493,23 @@ rclcpp_action::CancelResponse UrDriverNode::handle_move_joints_cancel(
 void UrDriverNode::handle_move_joints_accepted(
   std::shared_ptr<GoalHandleMoveJoints> goal_handle)
 {
-  std::thread{[this, goal_handle]() { execute_move_joints(goal_handle); }}.detach();
+  std::thread{[this, goal_handle]() {
+    try {
+      execute_move_joints(goal_handle);
+    } catch (const std::exception & e) {
+      RCLCPP_ERROR(get_logger(), "execute_move_joints threw: %s", e.what());
+      auto result     = std::make_shared<MoveJointsAction::Result>();
+      result->success = false;
+      result->message = std::string("Internal error: ") + e.what();
+      goal_handle->abort(result);
+    }
+  }}.detach();
 }
 
 void UrDriverNode::execute_move_joints(std::shared_ptr<GoalHandleMoveJoints> goal_handle)
 {
-  constexpr double kThreshold = 0.02;
-  constexpr double kTimeoutS  = 15.0;
+  constexpr double kThreshold = kMotionThresholdRad;
+  constexpr double kTimeoutS  = kMotionTimeoutS;
 
   const auto & goal_positions = goal_handle->get_goal()->joint_positions;
   std::array<double, 6> target;
@@ -476,6 +549,14 @@ void UrDriverNode::execute_move_joints(std::shared_ptr<GoalHandleMoveJoints> goa
       result->success = false;
       result->message = "Cancelled";
       goal_handle->canceled(result);
+      return;
+    }
+
+    if (!rtde_->is_connected()) {
+      auto result     = std::make_shared<MoveJointsAction::Result>();
+      result->success = false;
+      result->message = "RTDE disconnected mid-motion";
+      goal_handle->abort(result);
       return;
     }
 

@@ -23,9 +23,9 @@ namespace ur12_driver
 /// state interface buffers so standard controllers (JointStateBroadcaster,
 /// JointTrajectoryController) can consume them without knowing about RTDE.
 ///
-/// The write() path is a scaffold — it logs commands but does not yet
-/// forward them to the robot. Production path: External Control URCap
-/// reverse interface at 500 Hz.
+/// The write() path is a no-op stub — command interfaces are exported so
+/// controllers can be loaded, but setpoints are not forwarded to the robot.
+/// Production path: External Control URCap reverse interface at 500 Hz.
 class Ur12HardwareInterface : public hardware_interface::SystemInterface
 {
 public:

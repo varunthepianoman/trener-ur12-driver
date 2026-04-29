@@ -7,6 +7,7 @@ find_package(action_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/MoveFirstJoint.srv"
+  "srv/GetRobotMode.srv"
   "action/MoveHome.action"
   "action/MoveFirstJoint.action"
   "action/MoveJoints.action"

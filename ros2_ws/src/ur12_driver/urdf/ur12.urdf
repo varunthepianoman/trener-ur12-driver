@@ -1,7 +1,33 @@
 <?xml version="1.0"?>
 <robot name="ur12">
 
-  <!-- Minimal scaffold URDF — no kinematics/meshes, just joints for ros2_control -->
+  <!--
+    SCOPE: this is a deliberately minimal URDF — six revolute joints, the
+    fixed flange, and a <ros2_control> block pointing at our hardware
+    interface plugin. It satisfies controller_manager's validation step
+    so JointStateBroadcaster can spawn. Nothing else.
+
+    DELIBERATELY MISSING (not bugs — out of scope for this PoC):
+      - <origin xyz="..." rpy="..."> on every joint. Without these every
+        link sits at the world origin: TF lies, FK/IK lie, RViz misleads.
+        The current driver doesn't consume TF so this is invisible today,
+        but it is the FIRST thing to fix when wiring MoveIt2 or RViz.
+      - <inertial> mass / center / tensor. Required for effort or
+        computed-torque controllers, gravity compensation, and mass-aware
+        motion planning. Not required for pure position control.
+      - <visual> meshes. Cosmetic for RViz / Gazebo only.
+      - <collision> primitives. Required for self- and environment-collision
+        checking in MoveIt2.
+      - Real UR12 joint limits. The placeholders below are loose ±2π values;
+        actual UR12 limits are tighter on shoulder_lift in particular.
+
+    PRODUCTION PATH: replace this file with `Universal_Robots_ROS2_Description`
+    (apt: ros-jazzy-ur-description), processed via xacro at launch time.
+    Strip the upstream <ros2_control> block and inject the one below in its
+    place — the upstream URDF assumes ur_robot_driver's hardware plugin, not
+    ours. Drop the visual meshes if image size matters; everything else is
+    load-bearing for production.
+  -->
 
   <link name="base_link"/>
   <link name="shoulder_link"/>

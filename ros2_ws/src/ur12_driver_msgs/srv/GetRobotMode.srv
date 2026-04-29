@@ -1,0 +1,14 @@
+# Returns the current UR robot controller mode.
+# Wraps the Dashboard Server "robotmode" query (port 29999) with a typed
+# response so callers don't have to substring-parse a free-form message.
+---
+# True iff the dashboard server replied successfully.
+bool success
+
+# Parsed mode value: e.g. "RUNNING", "IDLE", "POWER_OFF", "BOOTING",
+# "BACKDRIVE", "POWER_ON", "DISCONNECTED", "CONFIRM_SAFETY", "NO_CONTROLLER".
+# Empty if success is false.
+string mode
+
+# Raw dashboard reply, retained for debugging — typically "Robotmode: RUNNING".
+string raw

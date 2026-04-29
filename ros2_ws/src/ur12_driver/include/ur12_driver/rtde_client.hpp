@@ -8,13 +8,14 @@
 
 #include <array>
 #include <atomic>
-#include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <utility>
 #include <vector>
+
+#include "rclcpp/rclcpp.hpp"
 
 namespace ur12_driver
 {
@@ -140,6 +141,12 @@ private:
   std::thread        thread_;
   uint8_t            recipe_id_{0};
 
+  static rclcpp::Logger logger()
+  {
+    static auto lg = rclcpp::get_logger("RtdeClient");
+    return lg;
+  }
+
   // ------------------------------------------------------------------
   // Handshake steps
   // ------------------------------------------------------------------
@@ -224,17 +231,19 @@ private:
       if (!connect_socket() || !request_protocol_version() ||
           !setup_outputs()  || !send_start())
       {
-        fprintf(stderr, "[RtdeClient] Handshake failed (robot may be powered off) — retrying in 2s\n");
+        RCLCPP_WARN(logger(),
+          "Handshake failed (robot may be powered off) — retrying in 2s");
         sleep(2); continue;
       }
 
-      fprintf(stderr, "[RtdeClient] Handshake successful — streaming joint states at %.0f Hz\n", frequency_);
+      RCLCPP_INFO(logger(),
+        "Handshake successful — streaming joint states at %.0f Hz", frequency_);
       connected_ = true;
 
       while (running_) {
         auto [type, data] = recv_packet();
         if (type == 0) {
-          fprintf(stderr, "[RtdeClient] Connection lost — reconnecting\n");
+          RCLCPP_WARN(logger(), "Connection lost — reconnecting");
           connected_ = false;
           break;
         }

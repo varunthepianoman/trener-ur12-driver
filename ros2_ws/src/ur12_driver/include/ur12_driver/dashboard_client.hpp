@@ -5,6 +5,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -57,7 +58,20 @@ public:
 
   bool connect()
   {
-    disconnect();
+    std::lock_guard<std::mutex> lock(socket_mutex_);
+    return connect_locked();
+  }
+
+  void disconnect()
+  {
+    std::lock_guard<std::mutex> lock(socket_mutex_);
+    disconnect_locked();
+  }
+
+private:
+  bool connect_locked()
+  {
+    disconnect_locked();
 
     struct addrinfo hints{}, * res = nullptr;
     hints.ai_family   = AF_INET;
@@ -94,7 +108,7 @@ public:
     return false;
   }
 
-  void disconnect()
+  void disconnect_locked()
   {
     if (fd_ >= 0) {
       send_line("quit");
@@ -103,14 +117,19 @@ public:
     }
   }
 
-private:
   std::string host_;
   int         port_;
   int         fd_;
 
+  // Serialises socket access. Action-cancel handlers call dashboard_->stop()
+  // from the executor thread while service callbacks may be hitting power_on
+  // etc. on the main thread — without this lock, two writers race on fd_.
+  mutable std::mutex socket_mutex_;
+
   std::pair<bool, std::string> cmd(const std::string & command)
   {
-    if (fd_ < 0 && !connect()) {
+    std::lock_guard<std::mutex> lock(socket_mutex_);
+    if (fd_ < 0 && !connect_locked()) {
       return {false, "Not connected to dashboard server"};
     }
     if (!send_line(command)) {

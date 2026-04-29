@@ -23,12 +23,17 @@ wait_for_mode() {
   local elapsed=0
   echo -n "  Waiting for robot mode '$expected'..."
   while true; do
+    # ros2 service call prints the response as a Python-repr one-liner:
+    #   response:
+    #   ur12_driver_msgs.srv.GetRobotMode_Response(success=True, mode='IDLE', raw='...')
+    # We extract the value of the mode= field.
     local mode
-    mode=$(ros2 service call /ur/get_robot_mode std_srvs/srv/Trigger 2>/dev/null \
-           | grep "message" | head -1 || true)
-    if echo "$mode" | grep -qi "$expected"; then echo " OK"; return 0; fi
+    mode=$(ros2 service call /ur/get_robot_mode \
+              ur12_driver_msgs/srv/GetRobotMode 2>/dev/null \
+           | grep -oE "mode='[^']*'" | head -1 | sed -E "s/mode='(.*)'/\1/" || true)
+    if [ -n "$mode" ] && echo "$mode" | grep -qi "$expected"; then echo " OK ($mode)"; return 0; fi
     sleep 2; elapsed=$((elapsed + 2))
-    if [ "$elapsed" -ge 30 ]; then echo " TIMEOUT"; return 1; fi
+    if [ "$elapsed" -ge 30 ]; then echo " TIMEOUT (last mode: ${mode:-<unparseable>})"; return 1; fi
     echo -n "."
   done
 }
